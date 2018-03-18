@@ -1,9 +1,10 @@
 #include <inttypes.h>
+#include <assert.h>
 #include "balloc.h"
 
 struct ballocator {
     uint32_t total;
-    uint32_t free;
+    uint32_t next;
 };
 
 /*
@@ -12,11 +13,15 @@ struct ballocator {
  */
 int balloc_init(const char *path, ballocator_t **balloc)
 {
+    /* stat */
+    /* mmap */
+    /* 
     return 0;
 }
 
 int balloc_alloc(ballocator_t *balloc, uint32_t *blkno)
 {
+    /* 
     return 0;
 }
 

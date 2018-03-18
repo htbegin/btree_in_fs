@@ -8,8 +8,8 @@ typedef struct ballocator ballocator_t;
  * 2. a fixed-size file (64MB) is used for block management
  */
 int balloc_init(const char *path, ballocator_t **balloc);
-int balloc_alloc(ballocator_t *balloc, uint32_t *blkno);
-int balloc_read(ballocator_t *balloc, uint32_t *blkno, void **raw);
+int balloc_alloc_read(ballocator_t *balloc, uint32_t *blkno, void **raw);
+int balloc_read(ballocator_t *balloc, uint32_t blkno, void **raw);
 int balloc_free(ballocator_t *balloc, uint32_t blkno);
 void balloc_exit(ballocator_t *balloc);
 
