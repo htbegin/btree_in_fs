@@ -250,9 +250,9 @@ int btree_split_child(btree_t *btree, node_header_t *node, int idx)
     bkey_t *new_key;
     bndata_t *new_ndata;
 
-    balloc_alloc_read(btree->balloc, &right_blkno, &right_raw);
     left_blkno = ((bndata_t *)btree_node_data_ptr(node, idx))->blkno;
     balloc_read(btree->balloc, left_blkno, &left_raw);
+    balloc_alloc_read(btree->balloc, &right_blkno, &right_raw);
 
     if (node->level == 1) {
         leaf_header_t *left = left_raw;
@@ -261,12 +261,14 @@ int btree_split_child(btree_t *btree, node_header_t *node, int idx)
         btree_init_leaf(right, right_blkno);
         right->cnt = BTREE_LEAF_HALF_CNT;
 
+        /* [0, half - 1], half - 1, [half, 2 * half - 1] */
         to = btree_leaf_key_ptr(right, 0);
         from = btree_leaf_key_ptr(left, BTREE_LEAF_HALF_CNT);
         len = sizeof(bkey_t) * right->cnt;
         memcpy(to, from, len);
         memset(from, 0, len);
 
+        /* [0, half - 1], [half, 2 * half - 1] */
         to = btree_leaf_data_ptr(right, 0);
         from = btree_leaf_data_ptr(left, BTREE_LEAF_HALF_CNT);
         len = sizeof(bdata_t) * right->cnt;
@@ -291,17 +293,20 @@ int btree_split_child(btree_t *btree, node_header_t *node, int idx)
         node_header_t *right = right_raw;
 
         btree_init_node(right, right_blkno);
+        right->level = left->level;
         right->cnt = BTREE_NODE_HALF_CNT;
 
+        /* [0, half - 1], half, [half + 1, 2 * half] */
         to = btree_node_key_ptr(right, 0);
         from = btree_node_key_ptr(left, BTREE_NODE_HALF_CNT + 1);
         len = sizeof(bkey_t) * right->cnt;
         memcpy(to, from, len);
         memset(from, 0, len);
 
+        /* [0, half], [half + 1, 2 * half + 1] */
         to = btree_node_data_ptr(right, 0);
         from = btree_node_data_ptr(left, BTREE_NODE_HALF_CNT + 1);
-        len = sizeof(bndata_t) * right->cnt;
+        len = sizeof(bndata_t) * (right->cnt + 1);
         memcpy(to, from, len);
         memset(from, 0, len);
 
