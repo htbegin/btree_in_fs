@@ -93,6 +93,7 @@ int balloc_init(const char *path, ballocator_t **balloc)
 int balloc_alloc_read(ballocator_t *balloc, uint32_t *blkno, void **raw)
 {
     if (balloc->free_blk_cnt == 0) {
+        printf("no free blk\n");
         assert(0);
         return -1;
     }
