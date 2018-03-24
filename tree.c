@@ -438,19 +438,104 @@ int btree_delete(btree_t *tree, const bkey_t *key, bdata_t *data)
     return 0;
 }
 
+void btree_dump_leaf(leaf_header_t *leaf)
+{
+    bkey_t *key;
+    unsigned int step;
+    unsigned int idx;
+
+    printf("leaf blk %u, left %u, right %u, cnt %u\n",
+            leaf->blkno, leaf->left, leaf->right, leaf->cnt,
+            BTREE_LEAF_HALF_CNT, BTREE_LEAF_FULL_CNT);
+
+    step = leaf->cnt / 5;
+    for (idx = 0; idx < leaf->cnt; idx += step) {
+        key = btree_leaf_key_ptr(leaf, idx);
+        if (idx != 0)
+            printf("  ");
+        printf("[%u]=%llu", idx, key->offset);
+    }
+    if (idx != leaf->cnt - 1) {
+        key = btree_leaf_key_ptr(leaf, leaf->cnt - 1);
+        printf("  [%u]=%llu", leaf->cnt - 1, key->offset);
+    }
+    printf("\n");
+}
+
+/* breadth-first */
+void btree_dump_node(btree_t *btree, node_header_t *node)
+{
+    const unsigned int group = 8;
+    int i;
+    bkey_t *key;
+    bndata_t *ndata;
+
+    printf("node level %u, blk %u, cnt %u (half %u, full %u)\n",
+            node->level, node->blkno, node->cnt,
+            BTREE_NODE_HALF_CNT, BTREE_NODE_FULL_CNT);
+    key = btree_node_key_ptr(node, 0);
+    for (i = 0; i < node->cnt; i++, key++) {
+        if (i % group != 0)
+            printf("  ");
+
+        printf("[%u]=%llu", i, key->offset);
+
+        if (i % group == group - 1)
+            printf("\n");
+    }
+    if (i % group != 0)
+        printf("\n");
+
+    ndata = btree_node_data_ptr(node, 0);
+    for (i = 0; i < node->cnt + 1; i++, ndata++) {
+        if (i % group != 0)
+            printf("  ");
+
+        printf("[%u]=%u", i, ndata->blkno);
+
+        if (i % group == group - 1)
+            printf("\n");
+    }
+    if (i % group != 0)
+        printf("\n");
+    printf("\n");
+
+    ndata = btree_node_data_ptr(node, 0);
+    for (i = 0; i < node->cnt + 1; i++, ndata++) {
+        void *raw;
+
+        balloc_read(btree->balloc, ndata->blkno, &raw);
+        if (node->level != 1)
+            btree_dump_node(btree, raw);
+        else
+            btree_dump_leaf(raw);
+    }
+}
+
 void btree_dump(btree_t *btree)
 {
+    void *root = btree->root;
+
+    if (btree->level)
+        btree_dump_node(btree, root);
+    else
+        btree_dump_leaf(root);
 }
 
 int main(int argc, char **argv)
 {
-    const int cnt = 0;
+    int cnt;
     ballocator_t *balloc;
     btree_t *btree;
     int i;
     int ret;
     bkey_t key;
     bdata_t data;
+
+    if (argc == 2)
+        cnt = atoi(argv[1]);
+    else
+        cnt = 1024;
 
     balloc_init("/tmp/tree", &balloc);
 
@@ -464,16 +549,21 @@ int main(int argc, char **argv)
         assert(ret == 0);
     }
 
+    btree_dump(btree);
+
     for (i = cnt - 1; i >= 0; i--) {
         key.offset = i;
         ret = btree_search(btree, &key, &data);
-        assert(ret == 0);
-        assert(data.start == i);
+        if (ret != 0) {
+            printf("%d not found\n", i);
+            exit(1);
+        } else if (data.start != i) {
+            printf("%d exp %d, got %llu\n", i, i, data.start);
+            exit(1);
+        }
     }
 
-    btree_dump(btree);
-
-    for (i = 0; i < cnt; i++) {
+    for (i = 0; i < 0; i++) {
         ret = btree_delete(btree, &key, &data);
         assert(ret == 0);
         assert(data.start == i);
