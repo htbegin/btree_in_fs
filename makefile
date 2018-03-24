@@ -4,8 +4,11 @@ objs := tree.o balloc.o
 ALL : tree
 
 tree : $(objs) makefile
-	gcc -o $@ $(objs)
+	gcc -pg -o $@ $(objs)
 
 %.o : %.c
-	gcc -c -o $@ $<
+	gcc -pg -c -o $@ $<
 
+.PHONY : clean
+clean :
+	rm -f $(objs) tree

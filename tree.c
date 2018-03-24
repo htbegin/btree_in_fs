@@ -24,7 +24,7 @@ typedef struct bndata_t {
 #define BTREE_NODE_MAGIC 0xABCD5678
 #define BTREE_LEAF_MAGIC 0xEF014567
 
-#define BTREE_NODE_FULL_CNT 399
+#define BTREE_NODE_FULL_CNT 339
 #define BTREE_NODE_HALF_CNT 169
 /*
  * key cnt: [Tn - 1, 2Tn - 1], pointer cnt: [Tn, 2Tn]
@@ -78,17 +78,17 @@ static void btree_init_node(node_header_t *node, uint32_t blkno)
     node->blkno = blkno;
 }
 
-static inline bool btree_node_is_full(node_header_t *node)
+static inline int btree_node_is_full(node_header_t *node)
 {
     return (node->cnt == BTREE_NODE_FULL_CNT);
 }
 
-static inline bool btree_leaf_is_full(leaf_header_t *leaf)
+static inline int btree_leaf_is_full(leaf_header_t *leaf)
 {
     return (leaf->cnt == BTREE_LEAF_FULL_CNT);
 }
 
-static inline bool btree_nl_is_full(int level, void *root)
+static inline int btree_nl_is_full(int level, void *root)
 {
     if (level)
         return btree_node_is_full(root);
@@ -104,7 +104,7 @@ static inline uint32_t btree_root_blkno(btree_t *btree)
     if (btree->level) {
         node_header_t *node = root;
 
-        blkno = root->blkno;
+        blkno = node->blkno;
     } else {
         leaf_header_t *leaf = root;
 
@@ -119,7 +119,7 @@ static void *btree_leaf_key_ptr(leaf_header_t *leaf, int idx)
     return ((char *)&leaf[1] + idx * sizeof(bkey_t));
 }
 
-static void *btree_leaf_node_ptr(leaf_header_t *leaf, int idx)
+static void *btree_leaf_data_ptr(leaf_header_t *leaf, int idx)
 {
     return ((char *)&leaf[1] + BTREE_LEAF_FULL_CNT * sizeof(bkey_t) +
             idx * sizeof(bdata_t));
@@ -130,7 +130,7 @@ static void *btree_node_key_ptr(node_header_t *node, int idx)
     return ((char *)&node[1] + idx * sizeof(bkey_t));
 }
 
-static void *btree_node_node_ptr(node_header_t *node, int idx)
+static void *btree_node_data_ptr(node_header_t *node, int idx)
 {
     return ((char *)&node[1] + BTREE_NODE_FULL_CNT * sizeof(bkey_t) +
             idx * sizeof(bndata_t));
@@ -144,31 +144,93 @@ static inline int btree_cmp_key(const bkey_t *left, const bkey_t *right)
 
 int btree_new(ballocator_t *balloc, btree_t **btree)
 {
-    btree_t *new_btree;
+    btree_t *nbtree;
     uint32_t blkno;
     void *raw;
     leaf_header_t *root;
 
-    new_btree = malloc(sizeof(*new_btree));
-    assert(new_btree);
+    nbtree = malloc(sizeof(*nbtree));
+    assert(nbtree);
 
     balloc_alloc_read(balloc, &blkno, &raw);
     root = raw;
 
     btree_init_leaf(root, blkno);
 
-    new_btree->balloc = balloc;
-    new_btree->level = 0;
-    new_btree->root = root;
+    nbtree->balloc = balloc;
+    nbtree->level = 0;
+    nbtree->root = root;
 
-    *btree = new_btree;
+    *btree = nbtree;
 
     return 0;
 }
 
+static int btree_search_leaf(btree_t *btree, leaf_header_t *leaf, const bkey_t *key, bdata_t *data)
+{
+    int ret = 0;
+    unsigned int i;
+    bkey_t *leaf_key = btree_leaf_key_ptr(leaf, 0);
+    int cmp = 1;
+
+    for (i = 0; i < leaf->cnt; i++, leaf_key++) {
+        cmp = btree_cmp_key(key, leaf_key);
+        if (cmp <= 0)
+            break;
+    }
+
+    if (cmp == 0)
+        *data = *(bdata_t *)btree_leaf_data_ptr(leaf, i);
+    else
+        ret = -1;
+
+    return ret;
+}
+
+static int btree_search_node(btree_t *btree, node_header_t *node, const bkey_t *key, bdata_t *data)
+{
+    unsigned int i;
+    node_header_t *cur;
+    bkey_t *nkey;
+    bndata_t *ndata;
+    void *raw;
+    leaf_header_t *leaf;
+
+    cur = node;
+    while (1) {
+        i = 0;
+        nkey = btree_node_key_ptr(cur, 0);
+        while (i < cur->cnt) {
+            if (btree_cmp_key(key, nkey) <= 0)
+                break;
+            i++;
+            nkey++;
+        }
+
+        ndata = btree_node_data_ptr(cur, i);
+        balloc_read(btree->balloc, ndata->blkno, &raw);
+        if (cur->level != 1) {
+            cur = raw;
+        } else {
+            leaf = raw;
+            break;
+        }
+    }
+
+    return btree_search_leaf(btree, leaf, key, data);
+}
+
 int btree_search(btree_t *btree, const bkey_t *key, bdata_t *data)
 {
-    return 0;
+    int ret;
+    void *root = btree->root;
+
+    if (btree->level != 0)
+        ret = btree_search_node(btree, root, key, data);
+    else
+        ret = btree_search_leaf(btree, root, key, data);
+
+    return ret;
 }
 
 /*
@@ -189,6 +251,7 @@ int btree_split_child(btree_t *btree, node_header_t *node, int idx)
     bndata_t *new_ndata;
 
     balloc_alloc_read(btree->balloc, &right_blkno, &right_raw);
+    left_blkno = ((bndata_t *)btree_node_data_ptr(node, idx))->blkno;
     balloc_read(btree->balloc, left_blkno, &left_raw);
 
     if (node->level == 1) {
@@ -202,21 +265,23 @@ int btree_split_child(btree_t *btree, node_header_t *node, int idx)
         from = btree_leaf_key_ptr(left, BTREE_LEAF_HALF_CNT);
         len = sizeof(bkey_t) * right->cnt;
         memcpy(to, from, len);
+        memset(from, 0, len);
 
         to = btree_leaf_data_ptr(right, 0);
         from = btree_leaf_data_ptr(left, BTREE_LEAF_HALF_CNT);
         len = sizeof(bdata_t) * right->cnt;
         memcpy(to, from, len);
+        memset(from, 0, len);
 
         left->cnt = BTREE_LEAF_HALF_CNT;
 
-        moved_key = btree_leaf_key_ptr(left, BTREE_LEAF_HALF_CNT);
+        moved_key = btree_leaf_key_ptr(left, BTREE_LEAF_HALF_CNT - 1);
 
         right->right = left->right;
         if (right->right) {
             leaf_header_t *next;
 
-            balloc_read(btree->balloc, right->right, &(void *)next);
+            balloc_read(btree->balloc, right->right, (void **)&next);
             next->left = right_blkno;
         }
         right->left = left_blkno;
@@ -232,11 +297,13 @@ int btree_split_child(btree_t *btree, node_header_t *node, int idx)
         from = btree_node_key_ptr(left, BTREE_NODE_HALF_CNT + 1);
         len = sizeof(bkey_t) * right->cnt;
         memcpy(to, from, len);
+        memset(from, 0, len);
 
         to = btree_node_data_ptr(right, 0);
         from = btree_node_data_ptr(left, BTREE_NODE_HALF_CNT + 1);
         len = sizeof(bndata_t) * right->cnt;
         memcpy(to, from, len);
+        memset(from, 0, len);
 
         left->cnt = BTREE_NODE_HALF_CNT;
 
@@ -253,7 +320,7 @@ int btree_split_child(btree_t *btree, node_header_t *node, int idx)
 
     to = btree_node_data_ptr(node, idx + 2);
     from = btree_node_data_ptr(node, idx + 1);
-    len = sizeof(bndata_t) * (node->cnt- idx);
+    len = sizeof(bndata_t) * (node->cnt - idx);
     memmove(to, from, len);
 
     new_ndata = btree_node_data_ptr(node, idx + 1);
@@ -282,8 +349,8 @@ int btree_insert_leaf_nonfull(btree_t *btree, leaf_header_t *leaf,
         leaf_key--;
     }
 
-    *btree_leaf_key_ptr(leaf, i) = *key;
-    *btree_leaf_data_ptr(leaf, i) = *data;
+    *(bkey_t *)btree_leaf_key_ptr(leaf, i) = *key;
+    *(bdata_t *)btree_leaf_data_ptr(leaf, i) = *data;
 
     leaf->cnt += 1;
 
@@ -323,9 +390,9 @@ int btree_insert_node_nonfull(btree_t *btree, node_header_t *node,
     }
 
     if (node->level != 1)
-        btree_insert_node_nonfull(btree, raw, data, key);
+        btree_insert_node_nonfull(btree, raw, key, data);
     else
-        btree_insert_leaf_nonfull(btree, raw, data, key);
+        btree_insert_leaf_nonfull(btree, raw, key, data);
 
     return 0;
 }
@@ -338,15 +405,15 @@ int btree_insert(btree_t *btree, const bkey_t *key, const bdata_t *data)
     if (btree_nl_is_full(level, root)) {
         uint32_t blkno;
         node_header_t *node;
-        bndata_t *data;
+        bndata_t *ndata;
 
-        balloc_alloc_read(btree->balloc, &blkno, &(void *)node);
+        balloc_alloc_read(btree->balloc, &blkno, (void **)&node);
 
         btree_init_node(node, blkno);
         node->level = btree->level + 1;
 
-        data = btree_node_data_ptr(node, 0);
-        data->blkno = btree_root_blkno(btree);
+        ndata = btree_node_data_ptr(node, 0);
+        ndata->blkno = btree_root_blkno(btree);
 
         btree_split_child(btree, node, 0);
 
