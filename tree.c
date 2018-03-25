@@ -901,6 +901,9 @@ void btree_dump_leaf(leaf_header_t *leaf)
     printf("leaf blk %u, left %u, right %u, cnt %u\n",
             leaf->blkno, leaf->left, leaf->right, leaf->cnt);
 
+    if (!leaf->cnt)
+        return;
+
     if (verbose) {
         const int group = 5;
         bdata_t *data;
@@ -1050,6 +1053,8 @@ int main(int argc, char **argv)
             exit(1);
         }
     }
+
+    btree_dump(btree);
 
     balloc_exit(balloc);
 
