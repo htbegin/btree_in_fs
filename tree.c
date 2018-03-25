@@ -438,9 +438,85 @@ int btree_insert(btree_t *btree, const bkey_t *key, const bdata_t *data)
     return 0;
 }
 
-int btree_delete(btree_t *tree, const bkey_t *key, bdata_t *data)
+int btree_need_update_for_del(int plevel, void *child)
 {
-    return 0;
+    int need_update = 0;
+
+    if (plevel != 1) {
+        struct node_header_t *cnode = child;
+
+        need_update = cnode->cnt <= BTREE_NODE_HALF_CNT;
+    } else {
+        struct leaf_header_t *cleaf = child;
+
+        need_update = cleaf->cnt <= BTREE_LEAF_HALF_CNT;
+    }
+
+    return need_update;
+}
+
+void btree_update_for_del(btree_t *btree, node_header_t *node, void *child)
+{
+}
+
+int btree_delete_leaf(btree_t *btree, leaf_header_t *leaf, const bkey_t *key, bdata_t *data)
+{
+    assert(btree->root == leaf || leaf->cnt > BTREE_LEAF_HALF_CNT);
+    return -1;
+}
+
+int btree_delete_node(btree_t *btree, node_header_t *node, const bkey_t *key, bdata_t *data)
+{
+    int ret = 0;
+    void *child;
+    bkey_t *nkey;
+    bndata_t *ndata;
+    unsigned int i;
+
+    assert(btree->root == node || node->cnt > BTREE_NODE_HALF_CNT);
+
+    for (i = 0, nkey = btree_node_key_ptr(node, 0);
+            i < node->cnt; i++, nkey++) {
+        if (btree_cmp_key(key, nkey) <= 0)
+            break;
+    }
+
+    ndata = btree_node_data_ptr(node, i);
+    balloc_read(btree->balloc, ndata->blkno, &child);
+    if (btree_need_update_for_del(node->level, child))
+        btree_update_for_del(btree, node, child);
+
+    if (node->level != 1)
+        ret = btree_delete_node(btree, child, key, data);
+    else
+        ret = btree_delete_leaf(btree, child, key, data);
+
+    return ret;
+}
+
+int btree_delete(btree_t *btree, const bkey_t *key, bdata_t *data)
+{
+    /*
+     * ensure there are at least half + 1 key in node.
+     * 1. key cnt of leaf >= half + 1
+     *    remove the key & data
+     * 2. key cnt of leaf <= half, the key cnt of siblings also <= half
+     *    merge it with one sibling, remove a key from parent
+     *    if parent is root and it has only one key, reduce the root level
+     * 3. key cnt of leaf <= half, the key cnt of one sibling >= half + 1
+     *    move a key & data from the sibiling, update the key of parent
+     */
+    int ret;
+    int level = btree->level;
+    void *root = btree->root;
+
+    /* lookup down through the btree */
+    if (level != 0)
+        ret = btree_delete_node(btree, root, key, data);
+    else
+        ret = btree_delete_leaf(btree, root, key, data);
+
+    return ret;
 }
 
 void btree_dump_leaf(leaf_header_t *leaf)
@@ -554,7 +630,7 @@ int main(int argc, char **argv)
         assert(ret == 0);
     }
 
-    btree_dump(btree);
+    //btree_dump(btree);
 
     for (i = cnt - 1; i >= 0; i--) {
         key.offset = i;
@@ -568,10 +644,15 @@ int main(int argc, char **argv)
         }
     }
 
-    for (i = 0; i < 0; i++) {
+    for (i = 0; i < cnt; i++) {
         ret = btree_delete(btree, &key, &data);
-        assert(ret == 0);
-        assert(data.start == i);
+        if (ret != 0) {
+            printf("del %d: not found\n", i);
+            exit(1);
+        } else if (data.start != i) {
+            printf("del %d: exp %d, got %llu\n", i, i, data.start);
+            exit(1);
+        }
     }
 
     balloc_exit(balloc);
