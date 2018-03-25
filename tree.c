@@ -64,6 +64,8 @@ typedef struct btree_t {
     void *root;
 } btree_t;
 
+static int verbose = 0;
+
 static void btree_init_leaf(leaf_header_t *leaf, uint32_t blkno)
 {
     memset(leaf, 0, sizeof(*leaf));
@@ -874,23 +876,41 @@ int btree_delete(btree_t *btree, const bkey_t *key, bdata_t *data)
 void btree_dump_leaf(leaf_header_t *leaf)
 {
     bkey_t *key;
-    unsigned int step;
-    unsigned int idx;
+    unsigned int i;
 
     printf("leaf blk %u, left %u, right %u, cnt %u\n",
-            leaf->blkno, leaf->left, leaf->right, leaf->cnt,
-            BTREE_LEAF_HALF_CNT, BTREE_LEAF_FULL_CNT);
+            leaf->blkno, leaf->left, leaf->right, leaf->cnt);
 
-    step = leaf->cnt / 5;
-    for (idx = 0; idx < leaf->cnt; idx += step) {
-        key = btree_leaf_key_ptr(leaf, idx);
-        if (idx != 0)
-            printf("  ");
-        printf("[%u]=%llu", idx, key->offset);
-    }
-    if (idx != leaf->cnt - 1) {
-        key = btree_leaf_key_ptr(leaf, leaf->cnt - 1);
-        printf("  [%u]=%llu", leaf->cnt - 1, key->offset);
+    if (verbose) {
+        const int group = 5;
+        bdata_t *data;
+
+        key = btree_leaf_key_ptr(leaf, 0);
+        data = btree_leaf_data_ptr(leaf, 0);
+        for (i = 0; i < leaf->cnt; i++, key++, data++) {
+            if (i % group != 0)
+                printf("  ");
+
+            printf("[%u]=%llu:%llu", i, key->offset, data->start);
+
+            if (i % group == group - 1)
+                printf("\n");
+        }
+        if (i % group != 0)
+            printf("\n");
+    } else {
+        unsigned int step = leaf->cnt / 5;
+
+        for (i = 0; i < leaf->cnt; i += step) {
+            key = btree_leaf_key_ptr(leaf, i);
+            if (i != 0)
+                printf("  ");
+            printf("[%u]=%llu", i, key->offset);
+        }
+        if (i != leaf->cnt - 1) {
+            key = btree_leaf_key_ptr(leaf, leaf->cnt - 1);
+            printf("  [%u]=%llu", leaf->cnt - 1, key->offset);
+        }
     }
     printf("\n");
 }
@@ -957,7 +977,7 @@ void btree_dump(btree_t *btree)
 
 int main(int argc, char **argv)
 {
-    int cnt;
+    int cnt = 1024;
     ballocator_t *balloc;
     btree_t *btree;
     int i;
@@ -965,10 +985,11 @@ int main(int argc, char **argv)
     bkey_t key;
     bdata_t data;
 
-    if (argc == 2)
+    if (argc >= 2)
         cnt = atoi(argv[1]);
-    else
-        cnt = 1024;
+
+    if (argc >= 3)
+        verbose = 1;
 
     balloc_init("/tmp/tree", &balloc);
 
