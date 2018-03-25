@@ -455,87 +455,66 @@ int btree_need_update_for_del(int plevel, void *child)
     return need_update;
 }
 
-void *btree_steal_left_node(btree_t *btree, node_header_t *node, node_header_t *child,
-        node_header_t *left, unsigned int key_idx)
+void *btree_steal_node(btree_t *btree, node_header_t *node, unsigned int key_idx,
+        node_header_t *src, unsigned int src_key_idx, unsigned int src_data_idx,
+        node_header_t *dst, unsigned int dst_key_idx, unsigned int dst_data_idx)
 {
     bkey_t *parent_key;
-    bkey_t *sibling_key;
-    bndata_t *sibling_ndata;
+    bkey_t *src_key;
+    bndata_t *src_ndata;
     bkey_t new_key;
     bndata_t new_ndata;
     void *from;
     void *to;
+    size_t len;
 
     parent_key = btree_node_key_ptr(node, key_idx);
-    sibling_ndata = btree_node_data_ptr(left, left->cnt);
+    src_ndata = btree_node_data_ptr(src, src_data_idx);
     new_key = *parent_key;
-    new_ndata = *sibling_ndata;
+    new_ndata = *src_ndata;
 
-    /* insert into position 0 */
-    from = btree_node_key_ptr(child, 0);
-    to = btree_node_key_ptr(child, 1);
-    memmove(to, from, sizeof(bkey_t) * child->cnt);
+    /* insert into position dst_key_idx */
+    if (dst_key_idx < dst->cnt) {
+        from = btree_node_key_ptr(dst, dst_key_idx);
+        to = btree_node_key_ptr(dst, dst_key_idx + 1);
+        len = sizeof(bkey_t) * (dst->cnt - dst_key_idx);
+        memmove(to, from, len);
 
-    from = btree_node_data_ptr(child, 0);
-    to = btree_node_data_ptr(child, 1);
-    memmove(to, from, sizeof(bndata_t) * (child->cnt + 1));
+        from = btree_node_data_ptr(dst, dst_key_idx);
+        to = btree_node_data_ptr(dst, dst_key_idx + 1);
+        len = sizeof(bndata_t) * (dst->cnt + 1 - dst_key_idx);
+        memmove(to, from, len);
+    }
 
-    *(bkey_t *)btree_node_key_ptr(child, 0) = new_key;
-    *(bndata_t *)btree_node_data_ptr(child, 0) = new_ndata;
+    *(bkey_t *)btree_node_key_ptr(dst, dst_key_idx) = new_key;
+    *(bndata_t *)btree_node_data_ptr(dst, dst_data_idx) = new_ndata;
 
-    child->cnt += 1;
+    dst->cnt += 1;
 
-    sibling_key = btree_node_key_ptr(left, left->cnt - 1);
-    *parent_key = *sibling_key;
+    /* replace key in parent node */
+    src_key = btree_node_key_ptr(src, src_key_idx);
+    *parent_key = *src_key;
 
-    memset(sibling_key, 0, sizeof(*sibling_key));
-    memset(sibling_ndata, 0, sizeof(*sibling_ndata));
-    left->cnt -= 1;
+    /* remove src_key_idx from src */
+    if (src_key_idx + 1 < src->cnt) {
+        from = btree_node_key_ptr(dst, src_key_idx + 1);
+        to = btree_node_key_ptr(dst, src_key_idx);
+        len = sizeof(bkey_t) * (dst->cnt - src_key_idx - 1);
+        memmove(to, from, len);
 
-    return child;
-}
+        from = btree_node_data_ptr(dst, src_key_idx + 1);
+        to = btree_node_data_ptr(dst, src_key_idx);
+        len = sizeof(bndata_t) * (dst->cnt - src_key_idx);
+        memmove(to, from, len);
+    }
 
-void *btree_steal_right_node(btree_t *btree, node_header_t *node, node_header_t *child,
-        node_header_t *right, unsigned int key_idx)
-{
-    bkey_t *parent_key;
-    bkey_t *sibling_key;
-    bndata_t *sibling_ndata;
-    bkey_t new_key;
-    bndata_t new_ndata;
-    void *from;
-    void *to;
+    src_key = btree_node_key_ptr(src, src->cnt - 1);
+    src_ndata = btree_node_data_ptr(src, src->cnt);
+    memset(src_key, 0, sizeof(*src_key));
+    memset(src_ndata, 0, sizeof(*src_ndata));
+    src->cnt -= 1;
 
-    parent_key = btree_node_key_ptr(node, key_idx);
-    sibling_ndata = btree_node_data_ptr(right, 0);
-    new_key = *parent_key;
-    new_ndata = *sibling_ndata;
-
-    /* insert into position cnt */
-    *(bkey_t *)btree_node_key_ptr(child, child->cnt) = new_key;
-    *(bndata_t *)btree_node_data_ptr(child, child->cnt + 1) = new_ndata;
-
-    child->cnt += 1;
-
-    sibling_key = btree_node_key_ptr(right, 0);
-    *parent_key = *sibling_key;
-
-    from = btree_node_key_ptr(right, 1);
-    to = btree_node_key_ptr(right, 0);
-    memmove(to, from, sizeof(bkey_t) * (right->cnt - 1));
-
-    from = btree_node_data_ptr(right, 1);
-    to = btree_node_data_ptr(right, 0);
-    memmove(to, from, sizeof(bndata_t) * right->cnt);
-
-    sibling_key = btree_node_key_ptr(right, right->cnt - 1);
-    sibling_ndata = btree_node_key_ptr(right, right->cnt);
-    memset(sibling_key, 0, sizeof(*sibling_key));
-    memset(sibling_ndata, 0, sizeof(*sibling_ndata));
-
-    right->cnt -= 1;
-
-    return child;
+    return dst;
 }
 
 void *btree_merge_node(btree_t *btree, node_header_t *node, node_header_t *dst,
@@ -616,14 +595,18 @@ void *btree_update_node_for_del(btree_t *btree, node_header_t *node, node_header
         balloc_read(btree->balloc, ndata->blkno, (void **)&left);
 
         if (left->cnt > BTREE_NODE_HALF_CNT)
-            return btree_steal_left_node(btree, node, child, left, data_idx - 1);
+            return btree_steal_node(btree, node, data_idx - 1,
+                    left, left->cnt - 1, left->cnt,
+                    child, 0, 0);
     }
 
     if (data_idx < node->cnt) {
         ndata = btree_node_data_ptr(node, data_idx + 1);
         balloc_read(btree->balloc, ndata->blkno, (void **)right);
         if (right->cnt > BTREE_NODE_HALF_CNT)
-            return btree_steal_right_node(btree, node, child, right, data_idx);
+            return btree_steal_node(btree, node, data_idx,
+                    right, 0, 0,
+                    child, child->cnt, child->cnt + 1);
     }
 
     if (left)
@@ -670,9 +653,8 @@ int btree_delete_node(btree_t *btree, node_header_t *node, const bkey_t *key, bd
     ndata = btree_node_data_ptr(node, i);
     balloc_read(btree->balloc, ndata->blkno, &child);
     if (btree_need_update_for_del(node->level, child)) {
+        /* child maybe freed and changed */
         child = btree_update_for_del(btree, node, child, i);
-
-        /* child maybe freed, so we need to get the new child ? */
     }
 
     if (node->level != 1)
