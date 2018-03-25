@@ -47,6 +47,14 @@ void ba_allocate_blk(uint64_t *bitmap, uint32_t blkno)
     bitmap[idx] |= (1ULL << bit);
 }
 
+void ba_free_blk(uint64_t *bitmap, uint32_t blkno)
+{
+    int idx = (blkno >> BA_BM_SHIFT);
+    int bit = (blkno & ~BA_BM_MASK);
+
+    bitmap[idx] &= ~(1ULL << bit);
+}
+
 int balloc_init(const char *path, ballocator_t **balloc)
 {
     ballocator_t *nballoc;
@@ -99,6 +107,7 @@ int balloc_alloc_read(ballocator_t *balloc, uint32_t *blkno, void **raw)
     }
 
     if (ba_blk_allocated(balloc->bitmap, balloc->next_blk)) {
+        printf("allocated blk %u\n", balloc->next_blk);
         assert(0);
         return -1;
     }
@@ -113,10 +122,15 @@ int balloc_alloc_read(ballocator_t *balloc, uint32_t *blkno, void **raw)
     return 0;
 }
 
+static int balloc_valid_blkno(ballocator_t *balloc, uint32_t blkno)
+{
+    return (blkno >= balloc->rsv_blk_cnt && blkno < balloc->total_blk_cnt);
+}
+
 int balloc_read(ballocator_t *balloc, uint32_t blkno, void **raw)
 {
-    if (blkno < balloc->rsv_blk_cnt || blkno >= balloc->total_blk_cnt) {
-        printf("blkno %u (rsv %u, total %u)\n", blkno,
+    if (!balloc_valid_blkno(balloc, blkno)) {
+        printf("read blkno %u (rsv %u, total %u)\n", blkno,
                 balloc->rsv_blk_cnt,
                 balloc->total_blk_cnt);
         assert(0);
@@ -130,6 +144,17 @@ int balloc_read(ballocator_t *balloc, uint32_t blkno, void **raw)
 
 int balloc_free(ballocator_t *balloc, uint32_t blkno)
 {
+    if (!balloc_valid_blkno(balloc, blkno)) {
+        printf("free blkno %u (rsv %u, total %u)\n", blkno,
+                balloc->rsv_blk_cnt,
+                balloc->total_blk_cnt);
+        assert(0);
+        return -1;
+    }
+
+    ba_free_blk(balloc->bitmap, blkno);
+    balloc->free_blk_cnt++;
+
     return 0;
 }
 
