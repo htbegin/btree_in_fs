@@ -771,7 +771,48 @@ void *btree_update_for_del(btree_t *btree, node_header_t *node, void *child, uns
 int btree_delete_leaf(btree_t *btree, leaf_header_t *leaf, const bkey_t *key, bdata_t *data)
 {
     assert(btree->root == leaf || leaf->cnt > BTREE_LEAF_HALF_CNT);
-    return -1;
+    bkey_t *cur_key;
+    int cmp = 1;
+    int i;
+    void *from;
+    void *to;
+    size_t len;
+
+    for (i = 0, cur_key = btree_leaf_key_ptr(leaf, 0); i < leaf->cnt;
+            i++, cur_key++) {
+        cmp = btree_cmp_key(key, cur_key);
+        if (cmp <= 0)
+            break;
+    }
+
+    if (cmp != 0)
+        return -1;
+
+    *data = *(bdata_t *)btree_leaf_data_ptr(leaf, i);
+
+    if (i + 1 < leaf->cnt) {
+        to = btree_leaf_key_ptr(leaf, i + 1);
+        from = btree_leaf_key_ptr(leaf, i);
+        len = sizeof(bkey_t) * (leaf->cnt - i - 1);
+        memmove(to, from, len);
+
+        to = btree_leaf_data_ptr(leaf, i + 1);
+        from = btree_leaf_data_ptr(leaf, i);
+        len = sizeof(bdata_t) * (leaf->cnt - i - 1);
+        memmove(to, from, len);
+    }
+
+    from = btree_leaf_key_ptr(leaf, leaf->cnt - 1);
+    len = sizeof(bkey_t);
+    memset(from, 0, len);
+
+    from = btree_leaf_data_ptr(leaf, leaf->cnt - 1);
+    len = sizeof(bdata_t);
+    memset(from, 0, len);
+
+    leaf->cnt -= 1;
+
+    return 0;
 }
 
 int btree_delete_node(btree_t *btree, node_header_t *node, const bkey_t *key, bdata_t *data)
