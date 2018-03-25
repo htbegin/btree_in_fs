@@ -499,14 +499,14 @@ void *btree_steal_node(btree_t *btree, node_header_t *node, unsigned int key_idx
 
     /* remove src_key_idx from src */
     if (src_key_idx + 1 < src->cnt) {
-        from = btree_node_key_ptr(dst, src_key_idx + 1);
-        to = btree_node_key_ptr(dst, src_key_idx);
-        len = sizeof(bkey_t) * (dst->cnt - src_key_idx - 1);
+        from = btree_node_key_ptr(src, src_key_idx + 1);
+        to = btree_node_key_ptr(src, src_key_idx);
+        len = sizeof(bkey_t) * (src->cnt - src_key_idx - 1);
         memmove(to, from, len);
 
-        from = btree_node_data_ptr(dst, src_key_idx + 1);
-        to = btree_node_data_ptr(dst, src_key_idx);
-        len = sizeof(bndata_t) * (dst->cnt - src_key_idx);
+        from = btree_node_data_ptr(src, src_key_idx + 1);
+        to = btree_node_data_ptr(src, src_key_idx);
+        len = sizeof(bndata_t) * (src->cnt - src_key_idx);
         memmove(to, from, len);
     }
 
@@ -614,7 +614,7 @@ void *btree_update_node_for_del(btree_t *btree, node_header_t *node, node_header
 
     if (data_idx < node->cnt) {
         ndata = btree_node_data_ptr(node, data_idx + 1);
-        balloc_read(btree->balloc, ndata->blkno, (void **)right);
+        balloc_read(btree->balloc, ndata->blkno, (void **)&right);
         if (right->cnt > BTREE_NODE_HALF_CNT)
             return btree_steal_node(btree, node, data_idx,
                     right, 0, 0,
@@ -670,14 +670,14 @@ void *btree_steal_leaf(btree_t *btree, node_header_t *node, unsigned int key_idx
 
     /* remove src_key_idx from src */
     if (src_key_idx + 1 < src->cnt) {
-        from = btree_leaf_key_ptr(dst, src_key_idx + 1);
-        to = btree_leaf_key_ptr(dst, src_key_idx);
-        len = sizeof(bkey_t) * (dst->cnt - src_key_idx - 1);
+        from = btree_leaf_key_ptr(src, src_key_idx + 1);
+        to = btree_leaf_key_ptr(src, src_key_idx);
+        len = sizeof(bkey_t) * (src->cnt - src_key_idx - 1);
         memmove(to, from, len);
 
-        from = btree_leaf_data_ptr(dst, src_key_idx + 1);
-        to = btree_leaf_data_ptr(dst, src_key_idx);
-        len = sizeof(bdata_t) * (dst->cnt - src_key_idx - 1);
+        from = btree_leaf_data_ptr(src, src_key_idx + 1);
+        to = btree_leaf_data_ptr(src, src_key_idx);
+        len = sizeof(bdata_t) * (src->cnt - src_key_idx - 1);
         memmove(to, from, len);
     }
 
@@ -749,7 +749,7 @@ void *btree_update_leaf_for_del(btree_t *btree, node_header_t *node, leaf_header
 
     if (data_idx < node->cnt) {
         ndata = btree_node_data_ptr(node, data_idx + 1);
-        balloc_read(btree->balloc, ndata->blkno, (void **)right);
+        balloc_read(btree->balloc, ndata->blkno, (void **)&right);
         if (right->cnt > BTREE_LEAF_HALF_CNT)
             return btree_steal_leaf(btree, node, data_idx,
                     right, 0, 0,
@@ -793,13 +793,13 @@ int btree_delete_leaf(btree_t *btree, leaf_header_t *leaf, const bkey_t *key, bd
     *data = *(bdata_t *)btree_leaf_data_ptr(leaf, i);
 
     if (i + 1 < leaf->cnt) {
-        to = btree_leaf_key_ptr(leaf, i + 1);
-        from = btree_leaf_key_ptr(leaf, i);
+        to = btree_leaf_key_ptr(leaf, i);
+        from = btree_leaf_key_ptr(leaf, i + 1);
         len = sizeof(bkey_t) * (leaf->cnt - i - 1);
         memmove(to, from, len);
 
-        to = btree_leaf_data_ptr(leaf, i + 1);
-        from = btree_leaf_data_ptr(leaf, i);
+        to = btree_leaf_data_ptr(leaf, i);
+        from = btree_leaf_data_ptr(leaf, i + 1);
         len = sizeof(bdata_t) * (leaf->cnt - i - 1);
         memmove(to, from, len);
     }
@@ -1018,12 +1018,15 @@ int main(int argc, char **argv)
     btree_dump(btree);
 
     for (i = 0; i < cnt; i++) {
+        key.offset = i;
         ret = btree_delete(btree, &key, &data);
         if (ret != 0) {
             printf("del %d: not found\n", i);
+            btree_dump(btree);
             exit(1);
         } else if (data.start != i) {
             printf("del %d: exp %d, got %llu\n", i, i, data.start);
+            btree_dump(btree);
             exit(1);
         }
     }
