@@ -690,6 +690,23 @@ void *btree_steal_leaf(btree_t *btree, node_header_t *node, unsigned int key_idx
     return dst;
 }
 
+void btree_update_siblings(btree_t *btree, leaf_header_t *src)
+{
+    leaf_header_t *left = NULL;
+    leaf_header_t *right = NULL;
+
+    /* update left & right of src */
+    if (src->left) {
+        balloc_read(btree->balloc, src->left, (void **)&left);
+        left->right = src->right;
+    }
+
+    if (src->right) {
+        balloc_read(btree->balloc, src->right, (void **)&right);
+        right->left = src->left;
+    }
+}
+
 void *btree_merge_leaf(btree_t *btree, node_header_t *node, leaf_header_t *dst,
         leaf_header_t *src, unsigned int key_idx)
 {
@@ -710,6 +727,9 @@ void *btree_merge_leaf(btree_t *btree, node_header_t *node, leaf_header_t *dst,
 
     dst->cnt += src->cnt;
     assert(dst->cnt <= BTREE_LEAF_FULL_CNT);
+
+    /* update left & right of src */
+    btree_update_siblings(btree, src);
 
     /* remove src */
     balloc_free(btree->balloc, src->blkno);
